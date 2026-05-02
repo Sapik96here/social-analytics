@@ -209,7 +209,10 @@ export default function GeneratorPage() {
             setVideoReady(true);
           } else if (status.status === "failed") {
             clearInterval(pollRef.current!);
-            throw new Error(status.error || "HeyGen render failed");
+            const errMsg = typeof status.error === "string" ? status.error
+              : status.error ? JSON.stringify(status.error)
+              : "HeyGen render failed";
+            throw new Error(errMsg);
           } else {
             // still processing — advance progress bar & cycle messages
             setVideoProgress((p) => Math.min(p + Math.random() * 4 + 1, 90));
@@ -223,9 +226,13 @@ export default function GeneratorPage() {
         }
       }, 5000);
     } catch (err) {
-      setVideoError(err instanceof Error ? err.message : String(err));
+      let msg = "Unknown error";
+      if (err instanceof Error) msg = err.message;
+      else if (typeof err === "string") msg = err;
+      else { try { msg = JSON.stringify(err); } catch { msg = String(err); } }
+      setVideoError(msg);
       setVideoLoading(false);
-      setStep(2); // go back so user can see the error and retry
+      // stay on step 3 so the error + "Try Again" button is visible
     }
   }
 
@@ -580,13 +587,22 @@ export default function GeneratorPage() {
           {/* ══ STEP 3 — Video ══ */}
           {step === 3 && (
             <div className="space-y-4">
-              {videoError && (
-                <div className="rounded-xl p-4 flex items-start gap-2" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
-                  <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-xs font-bold text-rose-400">Video generation failed</p>
-                    <p className="text-xs text-rose-400/70 mt-0.5">{videoError}</p>
+              {videoError && !videoLoading && !videoReady && (
+                <div className="space-y-3">
+                  <div className="rounded-xl p-4 flex items-start gap-2" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
+                    <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-bold text-rose-400">Video generation failed</p>
+                      <p className="text-xs text-rose-400/70 mt-0.5 break-all">{videoError}</p>
+                    </div>
                   </div>
+                  <button
+                    onClick={() => { setVideoError(null); setStep(2); }}
+                    className="w-full py-3 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all"
+                    style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
+                  >
+                    ← Try Again
+                  </button>
                 </div>
               )}
               {videoLoading && (
