@@ -14,6 +14,7 @@ import FollowerGrowthChart from "./FollowerGrowthChart";
 import PostThumbnail from "./PostThumbnail";
 import PlatformBadge from "./PlatformBadge";
 import { Eye, Share2, Bookmark, Users, TrendingUp } from "lucide-react";
+import FollowerGoalsSection from "./FollowerGoalsSection";
 
 // TODO: Replace with Meta Graph API batch requests across all connected accounts
 //   Use GET /? with batch=[{method:"GET",relative_url:"{account-id}/insights?..."}] for efficiency
@@ -152,6 +153,9 @@ export default function OverviewTab({ accounts, dateRange }: OverviewTabProps) {
 
   return (
     <div className="space-y-6">
+      {/* Real follower goals from Supabase */}
+      <FollowerGoalsSection />
+
       {/* Grand total banner */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
