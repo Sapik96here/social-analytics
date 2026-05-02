@@ -1,39 +1,23 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PIPELINE OVERVIEW (when connecting real services):
-//
-// Step 1 — Upload .docx
-//   TODO: POST /api/extract-script (FormData) — use mammoth.js server-side
-//   Returns: { text: string, wordCount: number }
-//
-// Step 2 — Review & edit script, then generate audio
-//   TODO: POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}
-//   Headers: { xi-api-key: ELEVENLABS_API_KEY, Content-Type: application/json }
-//   Body: { text, model_id: "eleven_multilingual_v2", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }
-//   Returns: audio/mpeg stream → save blob → create object URL
-//
-// Step 3 — Preview audio, then kick off HeyGen video
-//   TODO: POST https://api.heygen.com/v2/video/generate
-//   Headers: { X-Api-Key: HEYGEN_API_KEY }
-//   Body: { video_inputs: [{ character: { type: "avatar", avatar_id: YOUR_AVATAR_ID, avatar_style: "normal" },
-//             voice: { type: "audio", audio_url: <ElevenLabs audio URL> } }],
-//           dimension: { width: 1920, height: 1080 } }
-//   Returns: { video_id }
-//
-// Step 4 — Poll until ready, then download
-//   TODO: GET https://api.heygen.com/v1/video_status.get?video_id={video_id}  (poll every 5s)
-//   Returns: { status: "processing" | "completed" | "failed", video_url: string }
+// PIPELINE:
+// Step 1 — Upload .docx  →  POST /api/extract-script  →  plain text
+// Step 2 — Edit script + tweak voice + generate/regenerate audio freely
+//           POST /api/generate-audio  →  audio/mpeg blob
+// Step 3 — Generate HeyGen video + download
+//           TODO: POST https://api.heygen.com/v2/video/generate
+//           TODO: GET  https://api.heygen.com/v1/video_status.get?video_id={id}  (poll 5s)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useRef } from "react";
 import AppShell from "@/components/AppShell";
 import {
   Upload, FileText, Mic, Video, Download,
-  Check, ChevronRight, RefreshCw, Play, Pause, AlertCircle, SlidersHorizontal,
+  Check, ChevronRight, RefreshCw, Play, Pause,
+  AlertCircle, SlidersHorizontal, RotateCcw,
 } from "lucide-react";
 
-// Mock script — TODO: replace with real mammoth.js extraction from uploaded .docx
 const MOCK_SCRIPT = `Welcome to Mad Scientist Studio — where data meets drop culture.
 
 In today's fast-moving social landscape, brands need more than just a presence. They need an edge.
@@ -46,7 +30,6 @@ Mad Scientist Studio. Built for the bold.`;
 
 const WAVEFORM = [4, 10, 18, 8, 22, 14, 20, 6, 24, 12, 8, 26, 18, 10, 22, 12, 16, 8, 24, 18, 10, 20, 6, 22, 14];
 
-// HeyGen render status messages — TODO: replace with real poll responses
 const STATUS_MSGS = [
   "Initialising HeyGen render…",
   "Loading avatar: Brand Avatar v2…",
@@ -58,22 +41,28 @@ const STATUS_MSGS = [
   "Almost there…",
 ];
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3;
 
 const STEPS = [
-  { id: 1, label: "Upload",  icon: Upload   },
-  { id: 2, label: "Script",  icon: FileText },
-  { id: 3, label: "Audio",   icon: Mic      },
-  { id: 4, label: "Video",   icon: Video    },
+  { id: 1, label: "Upload", icon: Upload   },
+  { id: 2, label: "Script & Voice", icon: Mic },
+  { id: 3, label: "Video",  icon: Video    },
 ] as const;
 
 export default function GeneratorPage() {
-  const [step, setStep]               = useState<Step>(1);
-  const [fileName, setFileName]       = useState<string | null>(null);
-  const [script, setScript]           = useState(MOCK_SCRIPT);
-  const [extracting, setExtracting]   = useState(false);
+  // Navigation
+  const [step, setStep]             = useState<Step>(1);
+
+  // Step 1 — upload
+  const [fileName, setFileName]     = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Step 2 — script + voice
+  const [script, setScript]         = useState(MOCK_SCRIPT);
+  const [showSettings, setShowSettings] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
     stability: 0.5,
     similarity_boost: 0.75,
@@ -82,22 +71,22 @@ export default function GeneratorPage() {
     model: "eleven_multilingual_v2",
   });
   const [audioLoading, setAudioLoading] = useState(false);
-  const [audioReady, setAudioReady]   = useState(false);
-  const [audioUrl, setAudioUrl]       = useState<string | null>(null);
-  const [audioError, setAudioError]   = useState<string | null>(null);
-  const [isPlaying, setIsPlaying]     = useState(false);
+  const [audioUrl, setAudioUrl]     = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying]   = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Step 3 — video
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoLoading, setVideoLoading]   = useState(false);
   const [videoReady, setVideoReady]       = useState(false);
-  const [statusMsg, setStatusMsg]     = useState(STATUS_MSGS[0]);
-  const [isDragging, setIsDragging]   = useState(false);
-  const fileRef  = useRef<HTMLInputElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const [statusMsg, setStatusMsg]   = useState(STATUS_MSGS[0]);
 
-  const wordCount  = script.trim().split(/\s+/).length;
-  const estSecs    = Math.round((wordCount / 130) * 60);
-  const estDur     = `${Math.floor(estSecs / 60)}:${String(estSecs % 60).padStart(2, "0")}`;
-  const charCount  = script.replace(/\s/g, "").length;
+  const wordCount = script.trim().split(/\s+/).length;
+  const estSecs   = Math.round((wordCount / 130) * 60);
+  const estDur    = `${Math.floor(estSecs / 60)}:${String(estSecs % 60).padStart(2, "0")}`;
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
 
   async function extractScript(file: File) {
     setFileName(file.name);
@@ -106,7 +95,7 @@ export default function GeneratorPage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("/api/extract-script", { method: "POST", body: form });
+      const res  = await fetch("/api/extract-script", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       setScript(data.text);
@@ -118,10 +107,13 @@ export default function GeneratorPage() {
     }
   }
 
-  async function handleGenerateAudio() {
-    setAudioLoading(true);
+  async function generateAudio() {
+    if (audioRef.current) { audioRef.current.pause(); }
+    setIsPlaying(false);
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null);
     setAudioError(null);
-    setStep(3);
+    setAudioLoading(true);
     try {
       const res = await fetch("/api/generate-audio", {
         method: "POST",
@@ -133,31 +125,24 @@ export default function GeneratorPage() {
         throw new Error(msg || `ElevenLabs error ${res.status}`);
       }
       const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      setAudioUrl(url);
-      setAudioLoading(false);
-      setAudioReady(true);
+      setAudioUrl(URL.createObjectURL(blob));
     } catch (err) {
       setAudioError(err instanceof Error ? err.message : String(err));
+    } finally {
       setAudioLoading(false);
     }
   }
 
   function togglePlay() {
     if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
-    }
+    if (isPlaying) { audioRef.current.pause(); } else { audioRef.current.play(); }
     setIsPlaying(!isPlaying);
   }
 
-  // TODO: Replace with real HeyGen API call + polling (see header comment)
   function handleGenerateVideo() {
     setVideoLoading(true);
     setVideoProgress(0);
-    setStep(4);
+    setStep(3);
     let pct = 0;
     const iv = setInterval(() => {
       pct += Math.random() * 3.5 + 0.5;
@@ -177,39 +162,33 @@ export default function GeneratorPage() {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setStep(1); setFileName(null); setScript(MOCK_SCRIPT);
     setExtracting(false); setExtractError(null);
-    setAudioLoading(false); setAudioReady(false); setAudioUrl(null); setAudioError(null); setIsPlaying(false);
+    setAudioLoading(false); setAudioUrl(null); setAudioError(null); setIsPlaying(false);
     setVideoProgress(0); setVideoLoading(false); setVideoReady(false);
   }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <AppShell>
       <div className="bg-[#08090f] min-h-full text-white">
         <div className="max-w-2xl mx-auto px-6 py-8">
 
-          {/* ── Header ── */}
+          {/* Header */}
           <div className="mb-8">
             <div className="flex items-center gap-2 mb-2">
               <Video size={16} className="text-violet-400" />
-              <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-600">
-                Video Studio
-              </span>
+              <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-600">Video Studio</span>
             </div>
             <h1
               className="text-4xl font-black tracking-tight"
-              style={{
-                background: "linear-gradient(135deg, #8B5CF6 0%, #06B6D4 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
+              style={{ background: "linear-gradient(135deg, #8B5CF6 0%, #06B6D4 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}
             >
               Content Generator
             </h1>
-            <p className="text-zinc-600 mt-1 text-sm">
-              Script → Voice → Avatar → Download. Done.
-            </p>
+            <p className="text-zinc-600 mt-1 text-sm">Upload script · Dial in your voice · Generate video.</p>
           </div>
 
-          {/* ── Step indicator ── */}
+          {/* Step indicator */}
           <div className="flex items-center mb-10">
             {STEPS.map((s, i) => {
               const done   = step > s.id;
@@ -227,9 +206,7 @@ export default function GeneratorPage() {
                     >
                       {done ? <Check size={13} /> : s.id}
                     </div>
-                    <span className={`text-[10px] font-semibold tracking-wide ${
-                      active ? "text-zinc-300" : done ? "text-violet-500" : "text-zinc-700"
-                    }`}>
+                    <span className={`text-[10px] font-semibold tracking-wide whitespace-nowrap ${active ? "text-zinc-300" : done ? "text-violet-500" : "text-zinc-700"}`}>
                       {s.label}
                     </span>
                   </div>
@@ -244,175 +221,109 @@ export default function GeneratorPage() {
             })}
           </div>
 
-          {/* ══════════════════════════════════════════
-              STEP 1 — Upload Document
-          ══════════════════════════════════════════ */}
+          {/* ══ STEP 1 — Upload ══ */}
           {step === 1 && (
             <div className="space-y-4">
-              {/* TODO: Replace with real /api/extract-script endpoint using mammoth.js */}
               <input
-                ref={fileRef}
-                type="file"
-                accept=".docx"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) extractScript(f);
-                }}
+                ref={fileRef} type="file" accept=".docx" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) extractScript(f); }}
               />
-
               {!fileName ? (
                 <div
                   className="border-2 border-dashed rounded-2xl p-16 flex flex-col items-center gap-5 cursor-pointer transition-all"
-                  style={{
-                    borderColor: isDragging ? "#8B5CF6" : "rgba(255,255,255,0.07)",
-                    background:  isDragging ? "rgba(139,92,246,0.05)" : "rgba(255,255,255,0.01)",
-                  }}
+                  style={{ borderColor: isDragging ? "#8B5CF6" : "rgba(255,255,255,0.07)", background: isDragging ? "rgba(139,92,246,0.05)" : "rgba(255,255,255,0.01)" }}
                   onClick={() => fileRef.current?.click()}
-                  onDragOver={(e)  => { e.preventDefault(); setIsDragging(true);  }}
-                  onDragLeave={()  => setIsDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault(); setIsDragging(false);
-                    const f = e.dataTransfer.files[0];
-                    if (f) extractScript(f);
-                  }}
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => { e.preventDefault(); setIsDragging(false); const f = e.dataTransfer.files[0]; if (f) extractScript(f); }}
                 >
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                    style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)" }}
-                  >
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)" }}>
                     <Upload size={26} className="text-violet-400" />
                   </div>
                   <div className="text-center space-y-1">
                     <p className="text-sm font-bold text-zinc-300">Drop your script here</p>
-                    <p className="text-xs text-zinc-700">
-                      Supports <span className="text-zinc-500">.docx</span> · Max 10 MB
-                    </p>
+                    <p className="text-xs text-zinc-700">Supports <span className="text-zinc-500">.docx</span> · Max 10 MB</p>
                   </div>
-                  <span
-                    className="text-xs font-bold px-4 py-2 rounded-xl"
-                    style={{ background: "rgba(139,92,246,0.12)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.2)" }}
-                  >
+                  <span className="text-xs font-bold px-4 py-2 rounded-xl" style={{ background: "rgba(139,92,246,0.12)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.2)" }}>
                     Browse Files
                   </span>
                 </div>
               ) : (
                 <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl p-6 space-y-5">
                   <div className="flex items-center gap-4">
-                    <div
-                      className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-                      style={{ background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.2)" }}
-                    >
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.2)" }}>
                       {extracting
                         ? <span className="w-5 h-5 rounded-full border-2 border-violet-400/30 border-t-violet-400 animate-spin" />
-                        : <FileText size={20} className="text-violet-400" />
-                      }
+                        : <FileText size={20} className="text-violet-400" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-white truncate">{fileName}</p>
                       <p className="text-xs text-zinc-600 mt-0.5">
-                        {extracting ? "Extracting text…" : extractError ? "Extraction failed" : "Word Document · Script ready"}
+                        {extracting ? "Extracting text…" : extractError ? "Extraction failed" : "Script ready"}
                       </p>
                     </div>
-                    <button
-                      onClick={() => { setFileName(null); setExtractError(null); }}
-                      className="text-xs text-zinc-700 hover:text-zinc-400 transition-colors"
-                    >
-                      Remove
-                    </button>
+                    <button onClick={() => { setFileName(null); setExtractError(null); }} className="text-xs text-zinc-700 hover:text-zinc-400 transition-colors">Remove</button>
                   </div>
-
                   {extractError && (
-                    <div
-                      className="rounded-xl p-3 flex items-start gap-2"
-                      style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}
-                    >
+                    <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
                       <AlertCircle size={13} className="text-rose-400 mt-0.5 flex-shrink-0" />
                       <p className="text-xs text-rose-400">{extractError}</p>
                     </div>
                   )}
-
                   <button
                     onClick={() => setStep(2)}
                     disabled={extracting}
                     className="w-full py-3 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all disabled:opacity-40"
                     style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
                   >
-                    {extracting ? "Extracting…" : <>Review Script <ChevronRight size={14} /></>}
+                    {extracting ? "Extracting…" : <>Continue <ChevronRight size={14} /></>}
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* ══════════════════════════════════════════
-              STEP 2 — Review Script
-          ══════════════════════════════════════════ */}
+          {/* ══ STEP 2 — Script & Voice (combined) ══ */}
           {step === 2 && (
             <div className="space-y-4">
-              {/* Badges */}
-              <div className="flex flex-wrap gap-2">
-                <span
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full"
-                  style={{ background: "rgba(139,92,246,0.1)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.2)" }}
-                >
-                  <Mic size={11} />
-                  DAVID AI VOICE NEW
-                </span>
-                <span
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full"
-                  style={{ background: "rgba(6,182,212,0.1)", color: "#67e8f9", border: "1px solid rgba(6,182,212,0.2)" }}
-                >
-                  ElevenLabs API
-                </span>
-              </div>
 
-              {/* Editable script */}
-              {/* TODO: Pre-populate with real extracted text from mammoth.js via /api/extract-script */}
+              {/* Script editor */}
               <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-white/[0.04] flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-700">Script</span>
-                  <span className="text-[10px] text-zinc-800">{fileName}</span>
+                  <div className="flex items-center gap-2">
+                    <FileText size={12} className="text-zinc-600" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-700">Script</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] text-zinc-800">{wordCount} words · ~{estDur}</span>
+                    <span className="text-[10px] text-zinc-800">{fileName}</span>
+                  </div>
                 </div>
                 <textarea
                   value={script}
-                  onChange={(e) => setScript(e.target.value)}
+                  onChange={(e) => { setScript(e.target.value); setAudioUrl(null); setAudioError(null); }}
                   className="w-full bg-transparent px-5 py-4 text-sm text-zinc-300 leading-relaxed resize-none focus:outline-none"
-                  rows={10}
+                  rows={8}
                 />
               </div>
 
-              {/* Stats row */}
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { label: "Words",      value: wordCount },
-                  { label: "Est. Length", value: estDur   },
-                  { label: "Characters", value: charCount.toLocaleString() },
-                ].map(({ label, value }) => (
-                  <div key={label} className="bg-[#0f1020] border border-white/[0.06] rounded-xl p-3 text-center">
-                    <p className="text-lg font-black text-white">{value}</p>
-                    <p className="text-[10px] text-zinc-700 uppercase tracking-wider mt-0.5">{label}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Voice settings panel */}
+              {/* Voice settings */}
               <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl overflow-hidden">
                 <button
-                  onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+                  onClick={() => setShowSettings(!showSettings)}
                   className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
                 >
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal size={13} className="text-violet-400" />
                     <span className="text-xs font-bold text-zinc-300">Voice Settings</span>
+                    <span className="text-[10px] text-zinc-700">DAVID AI VOICE NEW</span>
                   </div>
-                  <span className="text-[10px] text-zinc-600">{showVoiceSettings ? "▲ Hide" : "▼ Adjust"}</span>
+                  <span className="text-[10px] text-zinc-600">{showSettings ? "▲ Hide" : "▼ Adjust"}</span>
                 </button>
 
-                {showVoiceSettings && (
+                {showSettings && (
                   <div className="px-4 pb-4 space-y-4 border-t border-white/[0.04]">
-
-                    {/* Model selector */}
+                    {/* Model */}
                     <div className="pt-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Model</p>
                       <div className="flex gap-1.5">
@@ -425,10 +336,7 @@ export default function GeneratorPage() {
                             key={m.id}
                             onClick={() => setVoiceSettings(s => ({ ...s, model: m.id }))}
                             className="flex-1 px-2 py-2 rounded-lg text-center transition-all border"
-                            style={{
-                              background: voiceSettings.model === m.id ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.02)",
-                              borderColor: voiceSettings.model === m.id ? "rgba(139,92,246,0.4)" : "rgba(255,255,255,0.05)",
-                            }}
+                            style={{ background: voiceSettings.model === m.id ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.02)", borderColor: voiceSettings.model === m.id ? "rgba(139,92,246,0.4)" : "rgba(255,255,255,0.05)" }}
                           >
                             <p className={`text-[10px] font-bold ${voiceSettings.model === m.id ? "text-violet-300" : "text-zinc-500"}`}>{m.label}</p>
                             <p className="text-[9px] text-zinc-700 mt-0.5">{m.sub}</p>
@@ -436,23 +344,19 @@ export default function GeneratorPage() {
                         ))}
                       </div>
                     </div>
-
                     {/* Sliders */}
                     {([
-                      { key: "stability",        label: "Stability",        lo: "Expressive",  hi: "Consistent", hint: "Low = more emotion & variation. High = more stable & uniform." },
-                      { key: "similarity_boost", label: "Clarity & Similarity", lo: "Natural", hi: "Enhanced",   hint: "How closely the output matches the original voice." },
-                      { key: "style",            label: "Style Exaggeration", lo: "None",      hi: "Exaggerated", hint: "Amplifies speaking style. 0 is recommended for most use cases." },
+                      { key: "stability",        label: "Stability",           lo: "Expressive", hi: "Consistent", hint: "Low = more emotion & variation. High = more stable." },
+                      { key: "similarity_boost", label: "Clarity & Similarity", lo: "Natural",   hi: "Enhanced",   hint: "How closely output matches the original voice." },
+                      { key: "style",            label: "Style Exaggeration",   lo: "None",      hi: "Exaggerated", hint: "Amplifies speaking style. Keep at 0 for most uses." },
                     ] as { key: keyof typeof voiceSettings; label: string; lo: string; hi: string; hint: string }[]).map(({ key, label, lo, hi, hint }) => (
                       <div key={key}>
                         <div className="flex justify-between items-baseline mb-1.5">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600">{label}</p>
-                          <span className="text-xs font-black text-violet-400">
-                            {((voiceSettings[key] as number) * 100).toFixed(0)}%
-                          </span>
+                          <span className="text-xs font-black text-violet-400">{((voiceSettings[key] as number) * 100).toFixed(0)}%</span>
                         </div>
                         <input
-                          type="range"
-                          min={0} max={1} step={0.01}
+                          type="range" min={0} max={1} step={0.01}
                           value={voiceSettings[key] as number}
                           onChange={(e) => setVoiceSettings(s => ({ ...s, [key]: parseFloat(e.target.value) }))}
                           className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
@@ -462,289 +366,147 @@ export default function GeneratorPage() {
                           <span className="text-[9px] text-zinc-800">{lo}</span>
                           <span className="text-[9px] text-zinc-800">{hi}</span>
                         </div>
-                        <p className="text-[9px] text-zinc-700 mt-1">{hint}</p>
+                        <p className="text-[9px] text-zinc-700 mt-0.5">{hint}</p>
                       </div>
                     ))}
-
-                    {/* Speaker boost toggle */}
+                    {/* Speaker boost */}
                     <div className="flex items-center justify-between pt-1">
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600">Speaker Boost</p>
-                        <p className="text-[9px] text-zinc-700 mt-0.5">Boosts similarity to the original speaker. Recommended on.</p>
+                        <p className="text-[9px] text-zinc-700 mt-0.5">Boosts similarity to the original speaker.</p>
                       </div>
                       <button
                         onClick={() => setVoiceSettings(s => ({ ...s, speaker_boost: !s.speaker_boost }))}
                         className="w-10 h-5 rounded-full transition-all relative flex-shrink-0"
                         style={{ background: voiceSettings.speaker_boost ? "linear-gradient(135deg, #8B5CF6, #06B6D4)" : "rgba(255,255,255,0.08)" }}
                       >
-                        <span
-                          className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
-                          style={{ left: voiceSettings.speaker_boost ? "calc(100% - 18px)" : "2px" }}
-                        />
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: voiceSettings.speaker_boost ? "calc(100% - 18px)" : "2px" }} />
                       </button>
                     </div>
-
                   </div>
                 )}
               </div>
 
-              {/* Generate audio */}
+              {/* Generate / Regenerate button */}
               <button
-                onClick={handleGenerateAudio}
-                className="w-full py-3.5 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all"
+                onClick={generateAudio}
+                disabled={audioLoading}
+                className="w-full py-3.5 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
               >
-                <Mic size={14} />
-                Generate Audio with ElevenLabs
+                {audioLoading ? (
+                  <><span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Generating audio…</>
+                ) : audioUrl ? (
+                  <><RotateCcw size={14} /> Regenerate Audio</>
+                ) : (
+                  <><Mic size={14} /> Generate Audio</>
+                )}
               </button>
-            </div>
-          )}
 
-          {/* ══════════════════════════════════════════
-              STEP 3 — Audio
-          ══════════════════════════════════════════ */}
-          {step === 3 && (
-            <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl overflow-hidden">
-              {audioLoading ? (
-                /* Generating state */
-                <div className="p-12 flex flex-col items-center gap-5">
-                  <div
-                    className="w-16 h-16 rounded-full flex items-center justify-center"
-                    style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)" }}
-                  >
-                    <Mic size={24} className="text-violet-400 animate-pulse" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-bold text-zinc-200">Generating audio…</p>
-                    {/* TODO: Replace with real ElevenLabs streaming progress */}
-                    <p className="text-xs text-zinc-600 mt-1">
-                      ElevenLabs · DAVID AI VOICE NEW · {wordCount} words
-                    </p>
-                  </div>
-                  {/* Animated waveform */}
-                  <div className="flex gap-0.5 items-end h-8">
-                    {WAVEFORM.map((h, i) => (
-                      <div
-                        key={i}
-                        className="w-1 rounded-full animate-pulse"
-                        style={{
-                          height: `${h}px`,
-                          background: "linear-gradient(to top, #8B5CF6, #06B6D4)",
-                          animationDelay: `${i * 40}ms`,
-                          opacity: 0.6,
-                        }}
-                      />
-                    ))}
-                  </div>
+              {/* Audio error */}
+              {audioError && (
+                <div className="rounded-xl p-3.5 flex items-start gap-2" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
+                  <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-rose-400">{audioError}</p>
                 </div>
-              ) : (
-                /* Audio ready state */
-                <div className="p-6 space-y-5">
+              )}
+
+              {/* Audio player — appears inline, no step change */}
+              {audioUrl && !audioLoading && (
+                <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl p-4 space-y-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                      style={{ background: "rgba(132,204,22,0.15)", border: "1px solid rgba(132,204,22,0.3)" }}
-                    >
-                      <Check size={14} className="text-lime-400" />
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(132,204,22,0.15)", border: "1px solid rgba(132,204,22,0.3)" }}>
+                      <Check size={12} className="text-lime-400" />
                     </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">Audio Ready</p>
-                      <p className="text-xs text-zinc-600">DAVID AI VOICE NEW · {estDur} · ElevenLabs</p>
+                    <p className="text-xs font-bold text-zinc-300">Audio ready — sounds good? Then generate your video.</p>
+                  </div>
+
+                  <audio ref={audioRef} src={audioUrl} onEnded={() => setIsPlaying(false)} className="hidden" />
+
+                  <div className="rounded-xl p-3" style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.1)" }}>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={togglePlay}
+                        className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
+                      >
+                        {isPlaying ? <Pause size={12} className="text-white" /> : <Play size={12} className="text-white ml-0.5" />}
+                      </button>
+                      <div className="flex-1 flex items-end gap-px h-7">
+                        {WAVEFORM.map((h, i) => (
+                          <div key={i} className="flex-1 rounded-full" style={{ height: `${h}px`, background: isPlaying && i < 9 ? "linear-gradient(to top, #8B5CF6, #06B6D4)" : "rgba(255,255,255,0.07)" }} />
+                        ))}
+                      </div>
+                      <a href={audioUrl} download="voiceover.mp3" className="text-[11px] text-zinc-600 font-mono flex-shrink-0 hover:text-violet-400 transition-colors" title="Download MP3">↓ mp3</a>
                     </div>
                   </div>
 
-                  {/* Real audio player */}
-                  {audioUrl && (
-                    <div
-                      className="rounded-xl p-3.5"
-                      style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.1)" }}
-                    >
-                      <audio
-                        ref={audioRef}
-                        src={audioUrl}
-                        onEnded={() => setIsPlaying(false)}
-                        className="hidden"
-                      />
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={togglePlay}
-                          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                          style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
-                        >
-                          {isPlaying
-                            ? <Pause size={12} className="text-white" />
-                            : <Play  size={12} className="text-white ml-0.5" />
-                          }
-                        </button>
-                        <div className="flex-1 flex items-end gap-px h-7">
-                          {WAVEFORM.map((h, i) => (
-                            <div
-                              key={i}
-                              className="flex-1 rounded-full"
-                              style={{
-                                height: `${h}px`,
-                                background: isPlaying && i < 9
-                                  ? "linear-gradient(to top, #8B5CF6, #06B6D4)"
-                                  : "rgba(255,255,255,0.07)",
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <a
-                          href={audioUrl}
-                          download="voiceover.mp3"
-                          className="text-[11px] text-zinc-600 font-mono flex-shrink-0 hover:text-violet-400 transition-colors"
-                          title="Download MP3"
-                        >
-                          ↓ mp3
-                        </a>
-                      </div>
-                    </div>
-                  )}
+                  <div className="text-[10px] text-zinc-700 text-center">
+                    Not happy with it? Tweak the settings above and hit <span className="text-zinc-500">Regenerate Audio</span>.
+                  </div>
 
-                  {audioError && (
-                    <div
-                      className="rounded-xl p-3.5 flex items-start gap-2"
-                      style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}
-                    >
-                      <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
-                      <p className="text-xs text-rose-400">{audioError}</p>
-                    </div>
-                  )}
-
+                  {/* Proceed to video */}
                   <button
                     onClick={handleGenerateVideo}
                     className="w-full py-3.5 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all"
-                    style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
+                    style={{ background: "linear-gradient(135deg, #F43F5E, #8B5CF6)" }}
                   >
                     <Video size={14} />
-                    Generate Video with HeyGen
+                    Looks good — Generate Video
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* ══════════════════════════════════════════
-              STEP 4 — Video
-          ══════════════════════════════════════════ */}
-          {step === 4 && (
+          {/* ══ STEP 3 — Video ══ */}
+          {step === 3 && (
             <div className="space-y-4">
               {!videoReady ? (
-                /* Rendering state */
                 <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl p-6 space-y-6">
-                  {/* Avatar info */}
                   <div className="flex items-center gap-4">
-                    <div
-                      className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 text-2xl"
-                      style={{
-                        background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(6,182,212,0.12))",
-                        border: "1px solid rgba(139,92,246,0.2)",
-                      }}
-                    >
-                      🎭
-                    </div>
+                    <div className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 text-2xl" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(6,182,212,0.12))", border: "1px solid rgba(139,92,246,0.2)" }}>🎭</div>
                     <div className="flex-1">
-                      {/* TODO: Replace with real avatar_id label from HeyGen account */}
                       <p className="text-sm font-bold text-white">Brand Avatar v2</p>
-                      <p className="text-xs text-zinc-600 mt-0.5">
-                        HeyGen Custom Avatar · 1080p · {estDur}
-                      </p>
+                      <p className="text-xs text-zinc-600 mt-0.5">HeyGen Custom Avatar · 1080p · {estDur}</p>
                     </div>
-                    <span
-                      className="text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse"
-                      style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa" }}
-                    >
-                      Rendering
-                    </span>
+                    <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse" style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa" }}>Rendering</span>
                   </div>
-
-                  {/* Progress */}
                   <div>
                     <div className="flex justify-between items-baseline mb-2">
                       <span className="text-xs text-zinc-500">{statusMsg}</span>
                       <span className="text-sm font-black text-white">{videoProgress}%</span>
                     </div>
                     <div className="h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{
-                          width: `${videoProgress}%`,
-                          background: "linear-gradient(90deg, #8B5CF6, #06B6D4)",
-                        }}
-                      />
+                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${videoProgress}%`, background: "linear-gradient(90deg, #8B5CF6, #06B6D4)" }} />
                     </div>
-                    {/* TODO: Replace with real estimated time from HeyGen API response */}
                     <p className="text-[10px] text-zinc-800 mt-2">Estimated time: ~1–2 minutes</p>
                   </div>
-
-                  {/* Thin pulsing activity bar */}
                   <div className="flex gap-1">
                     {Array.from({ length: 20 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="flex-1 h-1 rounded-full animate-pulse"
-                        style={{
-                          background: i < Math.floor(videoProgress / 5)
-                            ? "linear-gradient(90deg, #8B5CF6, #06B6D4)"
-                            : "rgba(255,255,255,0.04)",
-                          animationDelay: `${i * 60}ms`,
-                        }}
-                      />
+                      <div key={i} className="flex-1 h-1 rounded-full animate-pulse" style={{ background: i < Math.floor(videoProgress / 5) ? "linear-gradient(90deg, #8B5CF6, #06B6D4)" : "rgba(255,255,255,0.04)", animationDelay: `${i * 60}ms` }} />
                     ))}
                   </div>
                 </div>
               ) : (
-                /* Video ready state */
                 <div className="space-y-4">
                   <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl overflow-hidden">
-                    {/* Video thumbnail */}
-                    {/* TODO: Replace with real <video> or thumbnail from HeyGen video_url */}
                     <div
                       className="relative w-full flex items-center justify-center"
-                      style={{
-                        aspectRatio: "16/9",
-                        background:
-                          "radial-gradient(ellipse at 30% 40%, rgba(139,92,246,0.15) 0%, transparent 60%), radial-gradient(ellipse at 70% 70%, rgba(6,182,212,0.1) 0%, transparent 60%), #0d0c18",
-                      }}
+                      style={{ aspectRatio: "16/9", background: "radial-gradient(ellipse at 30% 40%, rgba(139,92,246,0.15) 0%, transparent 60%), radial-gradient(ellipse at 70% 70%, rgba(6,182,212,0.1) 0%, transparent 60%), #0d0c18" }}
                     >
-                      <button
-                        className="w-16 h-16 rounded-full flex items-center justify-center border transition-transform hover:scale-105"
-                        style={{
-                          background: "rgba(255,255,255,0.08)",
-                          borderColor: "rgba(255,255,255,0.15)",
-                          backdropFilter: "blur(8px)",
-                        }}
-                      >
+                      <button className="w-16 h-16 rounded-full flex items-center justify-center border transition-transform hover:scale-105" style={{ background: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)", backdropFilter: "blur(8px)" }}>
                         <Play size={20} className="text-white ml-1" />
                       </button>
-
                       <div className="absolute top-3 left-3">
-                        <span
-                          className="text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded"
-                          style={{ background: "rgba(132,204,22,0.2)", color: "#86efac" }}
-                        >
-                          ✓ Ready
-                        </span>
+                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded" style={{ background: "rgba(132,204,22,0.2)", color: "#86efac" }}>✓ Ready</span>
                       </div>
                       <div className="absolute bottom-3 right-3">
-                        <span
-                          className="text-[10px] font-mono px-2 py-1 rounded"
-                          style={{ background: "rgba(0,0,0,0.55)", color: "rgba(255,255,255,0.55)" }}
-                        >
-                          {estDur}
-                        </span>
+                        <span className="text-[10px] font-mono px-2 py-1 rounded" style={{ background: "rgba(0,0,0,0.55)", color: "rgba(255,255,255,0.55)" }}>{estDur}</span>
                       </div>
                     </div>
-
-                    {/* File info */}
                     <div className="px-5 py-4 border-t border-white/[0.04] flex items-center gap-6">
-                      {[
-                        { label: "Resolution", value: "1080p" },
-                        { label: "Duration",   value: estDur   },
-                        { label: "File Size",  value: "24.7 MB" },
-                        { label: "Format",     value: "MP4"    },
-                      ].map(({ label, value }) => (
+                      {[{ label: "Resolution", value: "1080p" }, { label: "Duration", value: estDur }, { label: "Format", value: "MP4" }].map(({ label, value }) => (
                         <div key={label}>
                           <p className="text-[10px] text-zinc-700 uppercase tracking-wider">{label}</p>
                           <p className="text-xs font-bold text-zinc-300 mt-0.5">{value}</p>
@@ -752,22 +514,14 @@ export default function GeneratorPage() {
                       ))}
                     </div>
                   </div>
-
-                  {/* Download */}
-                  {/* TODO: Replace onClick with real download — anchor to HeyGen video_url with download attribute */}
                   <button
                     className="w-full py-4 rounded-xl text-base font-black text-white flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.98] transition-all"
                     style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
-                    onClick={() => {/* TODO: window.open(videoUrl, "_blank") or anchor download */}}
+                    onClick={() => {/* TODO: window.open(videoUrl) */}}
                   >
-                    <Download size={18} />
-                    Download Video
+                    <Download size={18} /> Download Video
                   </button>
-
-                  <button
-                    onClick={handleReset}
-                    className="w-full py-2.5 text-xs font-semibold text-zinc-700 hover:text-zinc-400 transition-colors flex items-center justify-center gap-1.5"
-                  >
+                  <button onClick={handleReset} className="w-full py-2.5 text-xs font-semibold text-zinc-700 hover:text-zinc-400 transition-colors flex items-center justify-center gap-1.5">
                     <RefreshCw size={11} /> Start New
                   </button>
                 </div>
