@@ -10,7 +10,7 @@
 //           TODO: GET  https://api.heygen.com/v1/video_status.get?video_id={id}  (poll 5s)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import AppShell from "@/components/AppShell";
 import {
   Upload, FileText, Mic, Video, Download,
@@ -42,10 +42,12 @@ const STATUS_MSGS = [
   "Almost there…",
 ];
 
-const AVATARS = [
-  { id: "d1b89963395142818e1725be0f2d6af6",  type: "talking_photo" as const, label: "Photo Avatar 1" },
-  { id: "65a6b89fca064a2490c4c92d1795aafa",  type: "talking_photo" as const, label: "Photo Avatar 2" },
-  { id: "0249c2c8c03e4b4dbfa8734f35ecf377",  type: "avatar"        as const, label: "dnr"           },
+type AvatarInfo = { id: string; type: "avatar" | "talking_photo"; label: string; thumbnail: string | null };
+
+const AVATAR_FALLBACKS: AvatarInfo[] = [
+  { id: "d1b89963395142818e1725be0f2d6af6", type: "talking_photo", label: "Photo Avatar 1", thumbnail: null },
+  { id: "65a6b89fca064a2490c4c92d1795aafa", type: "talking_photo", label: "Photo Avatar 2", thumbnail: null },
+  { id: "0249c2c8c03e4b4dbfa8734f35ecf377", type: "avatar",        label: "dnr",           thumbnail: null },
 ];
 
 type Step = 1 | 2 | 3;
@@ -84,7 +86,8 @@ export default function GeneratorPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   // Step 3 — video
-  const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0]);
+  const [avatars, setAvatars]               = useState<AvatarInfo[]>(AVATAR_FALLBACKS);
+  const [selectedAvatar, setSelectedAvatar] = useState<AvatarInfo>(AVATAR_FALLBACKS[0]);
   const [audioBlob, setAudioBlob]     = useState<Blob | null>(null);
   const [videoId, setVideoId]         = useState<string | null>(null);
   const [videoProgress, setVideoProgress] = useState(0);
@@ -94,6 +97,17 @@ export default function GeneratorPage() {
   const [videoError, setVideoError]       = useState<string | null>(null);
   const [statusMsg, setStatusMsg]   = useState(STATUS_MSGS[0]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load fresh avatar thumbnails on mount
+  useEffect(() => {
+    fetch("/api/avatars")
+      .then((r) => r.json())
+      .then((data: AvatarInfo[]) => {
+        setAvatars(data);
+        setSelectedAvatar(data[0]);
+      })
+      .catch(() => {}); // silently fall back to text-only labels
+  }, []);
 
   const wordCount = script.trim().split(/\s+/).length;
   const estSecs   = Math.round((wordCount / 130) * 60);
@@ -211,7 +225,7 @@ export default function GeneratorPage() {
     } catch (err) {
       setVideoError(err instanceof Error ? err.message : String(err));
       setVideoLoading(false);
-      setStep(2);
+      setStep(2); // go back so user can see the error and retry
     }
   }
 
@@ -503,26 +517,51 @@ export default function GeneratorPage() {
                     Not happy with it? Tweak the settings above and hit <span className="text-zinc-500">Regenerate Audio</span>.
                   </div>
 
-                  {/* Avatar picker */}
+                  {/* Avatar picker with thumbnails */}
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Avatar</p>
-                    <div className="flex gap-2">
-                      {AVATARS.map((av) => (
-                        <button
-                          key={av.id}
-                          onClick={() => setSelectedAvatar(av)}
-                          className="flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border"
-                          style={{
-                            background: selectedAvatar.id === av.id ? "rgba(244,63,94,0.12)" : "rgba(255,255,255,0.02)",
-                            borderColor: selectedAvatar.id === av.id ? "rgba(244,63,94,0.4)" : "rgba(255,255,255,0.06)",
-                            color: selectedAvatar.id === av.id ? "#fb7185" : "#52525b",
-                          }}
-                        >
-                          {av.label}
-                        </button>
-                      ))}
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Pick Avatar</p>
+                    <div className="flex gap-3">
+                      {avatars.map((av) => {
+                        const active = selectedAvatar.id === av.id;
+                        return (
+                          <button
+                            key={av.id}
+                            onClick={() => setSelectedAvatar(av)}
+                            className="flex-1 flex flex-col items-center gap-2 rounded-xl p-2 transition-all border overflow-hidden"
+                            style={{
+                              background:   active ? "rgba(244,63,94,0.1)"  : "rgba(255,255,255,0.02)",
+                              borderColor:  active ? "rgba(244,63,94,0.5)"  : "rgba(255,255,255,0.06)",
+                            }}
+                          >
+                            {av.thumbnail ? (
+                              <div className="w-full rounded-lg overflow-hidden" style={{ aspectRatio: "1/1" }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={av.thumbnail} alt={av.label} className="w-full h-full object-cover" />
+                              </div>
+                            ) : (
+                              <div className="w-full rounded-lg flex items-center justify-center text-2xl" style={{ aspectRatio: "1/1", background: "rgba(255,255,255,0.04)" }}>
+                                🎭
+                              </div>
+                            )}
+                            <p className={`text-[10px] font-bold truncate w-full text-center ${active ? "text-rose-400" : "text-zinc-600"}`}>
+                              {av.label}
+                            </p>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
+
+                  {/* Video generation error shown inline here */}
+                  {videoError && (
+                    <div className="rounded-xl p-3.5 flex items-start gap-2" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
+                      <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-rose-400">Video generation failed</p>
+                        <p className="text-[11px] text-rose-400/70 mt-0.5">{videoError}</p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Proceed to video */}
                   <button
