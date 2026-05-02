@@ -30,7 +30,7 @@ import { useState, useRef } from "react";
 import AppShell from "@/components/AppShell";
 import {
   Upload, FileText, Mic, Video, Download,
-  Check, ChevronRight, RefreshCw, Play,
+  Check, ChevronRight, RefreshCw, Play, Pause, AlertCircle,
 } from "lucide-react";
 
 // Mock script — TODO: replace with real mammoth.js extraction from uploaded .docx
@@ -73,23 +73,55 @@ export default function GeneratorPage() {
   const [script, setScript]           = useState(MOCK_SCRIPT);
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioReady, setAudioReady]   = useState(false);
+  const [audioUrl, setAudioUrl]       = useState<string | null>(null);
+  const [audioError, setAudioError]   = useState<string | null>(null);
+  const [isPlaying, setIsPlaying]     = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoLoading, setVideoLoading]   = useState(false);
   const [videoReady, setVideoReady]       = useState(false);
   const [statusMsg, setStatusMsg]     = useState(STATUS_MSGS[0]);
   const [isDragging, setIsDragging]   = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef  = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   const wordCount  = script.trim().split(/\s+/).length;
   const estSecs    = Math.round((wordCount / 130) * 60);
   const estDur     = `${Math.floor(estSecs / 60)}:${String(estSecs % 60).padStart(2, "0")}`;
   const charCount  = script.replace(/\s/g, "").length;
 
-  // TODO: Replace with real ElevenLabs API call (see header comment)
-  function handleGenerateAudio() {
+  async function handleGenerateAudio() {
     setAudioLoading(true);
+    setAudioError(null);
     setStep(3);
-    setTimeout(() => { setAudioLoading(false); setAudioReady(true); }, 2400);
+    try {
+      const res = await fetch("/api/generate-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: script }),
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `ElevenLabs error ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      setAudioUrl(url);
+      setAudioLoading(false);
+      setAudioReady(true);
+    } catch (err) {
+      setAudioError(err instanceof Error ? err.message : String(err));
+      setAudioLoading(false);
+    }
+  }
+
+  function togglePlay() {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
   }
 
   // TODO: Replace with real HeyGen API call + polling (see header comment)
@@ -113,8 +145,9 @@ export default function GeneratorPage() {
   }
 
   function handleReset() {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
     setStep(1); setFileName(null); setScript(MOCK_SCRIPT);
-    setAudioLoading(false); setAudioReady(false);
+    setAudioLoading(false); setAudioReady(false); setAudioUrl(null); setAudioError(null); setIsPlaying(false);
     setVideoProgress(0); setVideoLoading(false); setVideoReady(false);
   }
 
@@ -277,8 +310,7 @@ export default function GeneratorPage() {
                   style={{ background: "rgba(139,92,246,0.1)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.2)" }}
                 >
                   <Mic size={11} />
-                  {/* TODO: Replace with real voice_id label from ElevenLabs account */}
-                  Alex Chen · Custom Voice
+                  DAVID AI VOICE NEW
                 </span>
                 <span
                   className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full"
@@ -347,7 +379,7 @@ export default function GeneratorPage() {
                     <p className="text-sm font-bold text-zinc-200">Generating audio…</p>
                     {/* TODO: Replace with real ElevenLabs streaming progress */}
                     <p className="text-xs text-zinc-600 mt-1">
-                      ElevenLabs · Alex Chen · {wordCount} words · {charCount.toLocaleString()} chars
+                      ElevenLabs · DAVID AI VOICE NEW · {wordCount} words
                     </p>
                   </div>
                   {/* Animated waveform */}
@@ -378,40 +410,68 @@ export default function GeneratorPage() {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-white">Audio Ready</p>
-                      <p className="text-xs text-zinc-600">Alex Chen · {estDur} · ElevenLabs</p>
+                      <p className="text-xs text-zinc-600">DAVID AI VOICE NEW · {estDur} · ElevenLabs</p>
                     </div>
                   </div>
 
-                  {/* Mock audio player */}
-                  {/* TODO: Replace with real <audio> element pointing to ElevenLabs blob URL */}
-                  <div
-                    className="rounded-xl p-3.5"
-                    style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.1)" }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <button
-                        className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
-                      >
-                        <Play size={12} className="text-white ml-0.5" />
-                      </button>
-                      <div className="flex-1 flex items-end gap-px h-7">
-                        {WAVEFORM.map((h, i) => (
-                          <div
-                            key={i}
-                            className="flex-1 rounded-full"
-                            style={{
-                              height: `${h}px`,
-                              background: i < 9
-                                ? "linear-gradient(to top, #8B5CF6, #06B6D4)"
-                                : "rgba(255,255,255,0.07)",
-                            }}
-                          />
-                        ))}
+                  {/* Real audio player */}
+                  {audioUrl && (
+                    <div
+                      className="rounded-xl p-3.5"
+                      style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.1)" }}
+                    >
+                      <audio
+                        ref={audioRef}
+                        src={audioUrl}
+                        onEnded={() => setIsPlaying(false)}
+                        className="hidden"
+                      />
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={togglePlay}
+                          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                          style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
+                        >
+                          {isPlaying
+                            ? <Pause size={12} className="text-white" />
+                            : <Play  size={12} className="text-white ml-0.5" />
+                          }
+                        </button>
+                        <div className="flex-1 flex items-end gap-px h-7">
+                          {WAVEFORM.map((h, i) => (
+                            <div
+                              key={i}
+                              className="flex-1 rounded-full"
+                              style={{
+                                height: `${h}px`,
+                                background: isPlaying && i < 9
+                                  ? "linear-gradient(to top, #8B5CF6, #06B6D4)"
+                                  : "rgba(255,255,255,0.07)",
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <a
+                          href={audioUrl}
+                          download="voiceover.mp3"
+                          className="text-[11px] text-zinc-600 font-mono flex-shrink-0 hover:text-violet-400 transition-colors"
+                          title="Download MP3"
+                        >
+                          ↓ mp3
+                        </a>
                       </div>
-                      <span className="text-[11px] text-zinc-600 font-mono flex-shrink-0">{estDur}</span>
                     </div>
-                  </div>
+                  )}
+
+                  {audioError && (
+                    <div
+                      className="rounded-xl p-3.5 flex items-start gap-2"
+                      style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}
+                    >
+                      <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-rose-400">{audioError}</p>
+                    </div>
+                  )}
 
                   <button
                     onClick={handleGenerateVideo}
