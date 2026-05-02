@@ -30,7 +30,7 @@ import { useState, useRef } from "react";
 import AppShell from "@/components/AppShell";
 import {
   Upload, FileText, Mic, Video, Download,
-  Check, ChevronRight, RefreshCw, Play, Pause, AlertCircle,
+  Check, ChevronRight, RefreshCw, Play, Pause, AlertCircle, SlidersHorizontal,
 } from "lucide-react";
 
 // Mock script — TODO: replace with real mammoth.js extraction from uploaded .docx
@@ -73,6 +73,14 @@ export default function GeneratorPage() {
   const [script, setScript]           = useState(MOCK_SCRIPT);
   const [extracting, setExtracting]   = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [voiceSettings, setVoiceSettings] = useState({
+    stability: 0.5,
+    similarity_boost: 0.75,
+    style: 0.0,
+    speaker_boost: true,
+    model: "eleven_multilingual_v2",
+  });
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioReady, setAudioReady]   = useState(false);
   const [audioUrl, setAudioUrl]       = useState<string | null>(null);
@@ -118,7 +126,7 @@ export default function GeneratorPage() {
       const res = await fetch("/api/generate-audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: script }),
+        body: JSON.stringify({ text: script, voiceSettings }),
       });
       if (!res.ok) {
         const msg = await res.text();
@@ -386,6 +394,98 @@ export default function GeneratorPage() {
                     <p className="text-[10px] text-zinc-700 uppercase tracking-wider mt-0.5">{label}</p>
                   </div>
                 ))}
+              </div>
+
+              {/* Voice settings panel */}
+              <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal size={13} className="text-violet-400" />
+                    <span className="text-xs font-bold text-zinc-300">Voice Settings</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-600">{showVoiceSettings ? "▲ Hide" : "▼ Adjust"}</span>
+                </button>
+
+                {showVoiceSettings && (
+                  <div className="px-4 pb-4 space-y-4 border-t border-white/[0.04]">
+
+                    {/* Model selector */}
+                    <div className="pt-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Model</p>
+                      <div className="flex gap-1.5">
+                        {[
+                          { id: "eleven_multilingual_v2", label: "Multilingual v2", sub: "Best quality" },
+                          { id: "eleven_turbo_v2_5",      label: "Turbo v2.5",      sub: "Fastest" },
+                          { id: "eleven_monolingual_v1",  label: "Mono v1",         sub: "English only" },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            onClick={() => setVoiceSettings(s => ({ ...s, model: m.id }))}
+                            className="flex-1 px-2 py-2 rounded-lg text-center transition-all border"
+                            style={{
+                              background: voiceSettings.model === m.id ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.02)",
+                              borderColor: voiceSettings.model === m.id ? "rgba(139,92,246,0.4)" : "rgba(255,255,255,0.05)",
+                            }}
+                          >
+                            <p className={`text-[10px] font-bold ${voiceSettings.model === m.id ? "text-violet-300" : "text-zinc-500"}`}>{m.label}</p>
+                            <p className="text-[9px] text-zinc-700 mt-0.5">{m.sub}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Sliders */}
+                    {([
+                      { key: "stability",        label: "Stability",        lo: "Expressive",  hi: "Consistent", hint: "Low = more emotion & variation. High = more stable & uniform." },
+                      { key: "similarity_boost", label: "Clarity & Similarity", lo: "Natural", hi: "Enhanced",   hint: "How closely the output matches the original voice." },
+                      { key: "style",            label: "Style Exaggeration", lo: "None",      hi: "Exaggerated", hint: "Amplifies speaking style. 0 is recommended for most use cases." },
+                    ] as { key: keyof typeof voiceSettings; label: string; lo: string; hi: string; hint: string }[]).map(({ key, label, lo, hi, hint }) => (
+                      <div key={key}>
+                        <div className="flex justify-between items-baseline mb-1.5">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600">{label}</p>
+                          <span className="text-xs font-black text-violet-400">
+                            {((voiceSettings[key] as number) * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0} max={1} step={0.01}
+                          value={voiceSettings[key] as number}
+                          onChange={(e) => setVoiceSettings(s => ({ ...s, [key]: parseFloat(e.target.value) }))}
+                          className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                          style={{ accentColor: "#8B5CF6" }}
+                        />
+                        <div className="flex justify-between mt-1">
+                          <span className="text-[9px] text-zinc-800">{lo}</span>
+                          <span className="text-[9px] text-zinc-800">{hi}</span>
+                        </div>
+                        <p className="text-[9px] text-zinc-700 mt-1">{hint}</p>
+                      </div>
+                    ))}
+
+                    {/* Speaker boost toggle */}
+                    <div className="flex items-center justify-between pt-1">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600">Speaker Boost</p>
+                        <p className="text-[9px] text-zinc-700 mt-0.5">Boosts similarity to the original speaker. Recommended on.</p>
+                      </div>
+                      <button
+                        onClick={() => setVoiceSettings(s => ({ ...s, speaker_boost: !s.speaker_boost }))}
+                        className="w-10 h-5 rounded-full transition-all relative flex-shrink-0"
+                        style={{ background: voiceSettings.speaker_boost ? "linear-gradient(135deg, #8B5CF6, #06B6D4)" : "rgba(255,255,255,0.08)" }}
+                      >
+                        <span
+                          className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                          style={{ left: voiceSettings.speaker_boost ? "calc(100% - 18px)" : "2px" }}
+                        />
+                      </button>
+                    </div>
+
+                  </div>
+                )}
               </div>
 
               {/* Generate audio */}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
-  const { text } = await req.json();
+  const { text, voiceSettings } = await req.json();
 
   if (!text?.trim()) {
     return NextResponse.json({ error: "No text provided" }, { status: 400 });
@@ -14,6 +14,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ElevenLabs not configured" }, { status: 500 });
   }
 
+  const {
+    stability = 0.5,
+    similarity_boost = 0.75,
+    style = 0.0,
+    speaker_boost = true,
+    model = "eleven_multilingual_v2",
+  } = voiceSettings ?? {};
+
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
     {
@@ -25,10 +33,12 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_monolingual_v1",
+        model_id: model,
         voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
+          stability,
+          similarity_boost,
+          style,
+          use_speaker_boost: speaker_boost,
         },
       }),
     }
