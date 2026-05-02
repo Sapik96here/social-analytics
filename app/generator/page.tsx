@@ -31,14 +31,21 @@ Mad Scientist Studio. Built for the bold.`;
 const WAVEFORM = [4, 10, 18, 8, 22, 14, 20, 6, 24, 12, 8, 26, 18, 10, 22, 12, 16, 8, 24, 18, 10, 20, 6, 22, 14];
 
 const STATUS_MSGS = [
-  "Initialising HeyGen render…",
-  "Loading avatar: Brand Avatar v2…",
+  "Uploading audio to HeyGen…",
+  "Queuing render job…",
+  "Loading avatar…",
   "Syncing audio to avatar…",
   "Rendering frames…",
   "Processing lip sync…",
   "Colour grading…",
   "Finalising video…",
   "Almost there…",
+];
+
+const AVATARS = [
+  { id: "d1b89963395142818e1725be0f2d6af6",  type: "talking_photo" as const, label: "Photo Avatar 1" },
+  { id: "65a6b89fca064a2490c4c92d1795aafa",  type: "talking_photo" as const, label: "Photo Avatar 2" },
+  { id: "0249c2c8c03e4b4dbfa8734f35ecf377",  type: "avatar"        as const, label: "dnr"           },
 ];
 
 type Step = 1 | 2 | 3;
@@ -77,10 +84,16 @@ export default function GeneratorPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   // Step 3 — video
+  const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0]);
+  const [audioBlob, setAudioBlob]     = useState<Blob | null>(null);
+  const [videoId, setVideoId]         = useState<string | null>(null);
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoLoading, setVideoLoading]   = useState(false);
   const [videoReady, setVideoReady]       = useState(false);
+  const [videoUrl, setVideoUrl]           = useState<string | null>(null);
+  const [videoError, setVideoError]       = useState<string | null>(null);
   const [statusMsg, setStatusMsg]   = useState(STATUS_MSGS[0]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const wordCount = script.trim().split(/\s+/).length;
   const estSecs   = Math.round((wordCount / 130) * 60);
@@ -125,6 +138,7 @@ export default function GeneratorPage() {
         throw new Error(msg || `ElevenLabs error ${res.status}`);
       }
       const blob = await res.blob();
+      setAudioBlob(blob);
       setAudioUrl(URL.createObjectURL(blob));
     } catch (err) {
       setAudioError(err instanceof Error ? err.message : String(err));
@@ -139,31 +153,75 @@ export default function GeneratorPage() {
     setIsPlaying(!isPlaying);
   }
 
-  function handleGenerateVideo() {
+  async function handleGenerateVideo() {
+    if (!audioBlob) return;
     setVideoLoading(true);
     setVideoProgress(0);
+    setVideoError(null);
+    setVideoUrl(null);
+    setVideoId(null);
     setStep(3);
-    let pct = 0;
-    const iv = setInterval(() => {
-      pct += Math.random() * 3.5 + 0.5;
-      if (pct >= 100) {
-        pct = 100;
-        clearInterval(iv);
-        setVideoProgress(100);
-        setTimeout(() => { setVideoLoading(false); setVideoReady(true); }, 500);
-        return;
+    setStatusMsg(STATUS_MSGS[0]);
+
+    try {
+      // Upload audio + kick off render
+      const form = new FormData();
+      form.append("audio", audioBlob, "voiceover.mp3");
+      form.append("avatarId", selectedAvatar.id);
+      form.append("avatarType", selectedAvatar.type);
+
+      const genRes = await fetch("/api/generate-video", { method: "POST", body: form });
+      if (!genRes.ok) {
+        const e = await genRes.json();
+        throw new Error(e.error || `HeyGen error ${genRes.status}`);
       }
-      setVideoProgress(Math.round(pct));
-      setStatusMsg(STATUS_MSGS[Math.min(Math.floor((pct / 100) * STATUS_MSGS.length), STATUS_MSGS.length - 1)]);
-    }, 700);
+      const { videoId: vid } = await genRes.json();
+      setVideoId(vid);
+      setStatusMsg(STATUS_MSGS[1]);
+      setVideoProgress(5);
+
+      // Poll every 5s for status
+      let msgIdx = 2;
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/video-status?video_id=${vid}`);
+          const status    = await statusRes.json();
+
+          if (status.status === "completed" && status.video_url) {
+            clearInterval(pollRef.current!);
+            setVideoProgress(100);
+            setVideoUrl(status.video_url);
+            setVideoLoading(false);
+            setVideoReady(true);
+          } else if (status.status === "failed") {
+            clearInterval(pollRef.current!);
+            throw new Error(status.error || "HeyGen render failed");
+          } else {
+            // still processing — advance progress bar & cycle messages
+            setVideoProgress((p) => Math.min(p + Math.random() * 4 + 1, 90));
+            setStatusMsg(STATUS_MSGS[Math.min(msgIdx, STATUS_MSGS.length - 1)]);
+            msgIdx++;
+          }
+        } catch (err) {
+          clearInterval(pollRef.current!);
+          setVideoError(err instanceof Error ? err.message : String(err));
+          setVideoLoading(false);
+        }
+      }, 5000);
+    } catch (err) {
+      setVideoError(err instanceof Error ? err.message : String(err));
+      setVideoLoading(false);
+      setStep(2);
+    }
   }
 
   function handleReset() {
+    if (pollRef.current) clearInterval(pollRef.current);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setStep(1); setFileName(null); setScript(MOCK_SCRIPT);
     setExtracting(false); setExtractError(null);
-    setAudioLoading(false); setAudioUrl(null); setAudioError(null); setIsPlaying(false);
-    setVideoProgress(0); setVideoLoading(false); setVideoReady(false);
+    setAudioLoading(false); setAudioUrl(null); setAudioBlob(null); setAudioError(null); setIsPlaying(false);
+    setVideoId(null); setVideoProgress(0); setVideoLoading(false); setVideoReady(false); setVideoUrl(null); setVideoError(null);
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -445,6 +503,27 @@ export default function GeneratorPage() {
                     Not happy with it? Tweak the settings above and hit <span className="text-zinc-500">Regenerate Audio</span>.
                   </div>
 
+                  {/* Avatar picker */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Avatar</p>
+                    <div className="flex gap-2">
+                      {AVATARS.map((av) => (
+                        <button
+                          key={av.id}
+                          onClick={() => setSelectedAvatar(av)}
+                          className="flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border"
+                          style={{
+                            background: selectedAvatar.id === av.id ? "rgba(244,63,94,0.12)" : "rgba(255,255,255,0.02)",
+                            borderColor: selectedAvatar.id === av.id ? "rgba(244,63,94,0.4)" : "rgba(255,255,255,0.06)",
+                            color: selectedAvatar.id === av.id ? "#fb7185" : "#52525b",
+                          }}
+                        >
+                          {av.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Proceed to video */}
                   <button
                     onClick={handleGenerateVideo}
@@ -462,13 +541,22 @@ export default function GeneratorPage() {
           {/* ══ STEP 3 — Video ══ */}
           {step === 3 && (
             <div className="space-y-4">
-              {!videoReady ? (
+              {videoError && (
+                <div className="rounded-xl p-4 flex items-start gap-2" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}>
+                  <AlertCircle size={14} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-rose-400">Video generation failed</p>
+                    <p className="text-xs text-rose-400/70 mt-0.5">{videoError}</p>
+                  </div>
+                </div>
+              )}
+              {videoLoading && (
                 <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl p-6 space-y-6">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 text-2xl" style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(6,182,212,0.12))", border: "1px solid rgba(139,92,246,0.2)" }}>🎭</div>
                     <div className="flex-1">
-                      <p className="text-sm font-bold text-white">Brand Avatar v2</p>
-                      <p className="text-xs text-zinc-600 mt-0.5">HeyGen Custom Avatar · 1080p · {estDur}</p>
+                      <p className="text-sm font-bold text-white">{selectedAvatar.label}</p>
+                      <p className="text-xs text-zinc-600 mt-0.5">HeyGen · 720p · {estDur}</p>
                     </div>
                     <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse" style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa" }}>Rendering</span>
                   </div>
@@ -478,9 +566,9 @@ export default function GeneratorPage() {
                       <span className="text-sm font-black text-white">{videoProgress}%</span>
                     </div>
                     <div className="h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${videoProgress}%`, background: "linear-gradient(90deg, #8B5CF6, #06B6D4)" }} />
+                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${videoProgress}%`, background: "linear-gradient(90deg, #8B5CF6, #06B6D4)" }} />
                     </div>
-                    <p className="text-[10px] text-zinc-800 mt-2">Estimated time: ~1–2 minutes</p>
+                    <p className="text-[10px] text-zinc-700 mt-2">Polling HeyGen every 5s · typically 1–3 min</p>
                   </div>
                   <div className="flex gap-1">
                     {Array.from({ length: 20 }).map((_, i) => (
@@ -488,25 +576,18 @@ export default function GeneratorPage() {
                     ))}
                   </div>
                 </div>
-              ) : (
+              )}
+              {videoReady && videoUrl && (
                 <div className="space-y-4">
                   <div className="bg-[#0f1020] border border-white/[0.06] rounded-2xl overflow-hidden">
-                    <div
-                      className="relative w-full flex items-center justify-center"
-                      style={{ aspectRatio: "16/9", background: "radial-gradient(ellipse at 30% 40%, rgba(139,92,246,0.15) 0%, transparent 60%), radial-gradient(ellipse at 70% 70%, rgba(6,182,212,0.1) 0%, transparent 60%), #0d0c18" }}
-                    >
-                      <button className="w-16 h-16 rounded-full flex items-center justify-center border transition-transform hover:scale-105" style={{ background: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)", backdropFilter: "blur(8px)" }}>
-                        <Play size={20} className="text-white ml-1" />
-                      </button>
-                      <div className="absolute top-3 left-3">
-                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded" style={{ background: "rgba(132,204,22,0.2)", color: "#86efac" }}>✓ Ready</span>
-                      </div>
-                      <div className="absolute bottom-3 right-3">
-                        <span className="text-[10px] font-mono px-2 py-1 rounded" style={{ background: "rgba(0,0,0,0.55)", color: "rgba(255,255,255,0.55)" }}>{estDur}</span>
-                      </div>
-                    </div>
+                    <video
+                      src={videoUrl}
+                      controls
+                      className="w-full rounded-t-2xl"
+                      style={{ aspectRatio: "16/9", background: "#0d0c18" }}
+                    />
                     <div className="px-5 py-4 border-t border-white/[0.04] flex items-center gap-6">
-                      {[{ label: "Resolution", value: "1080p" }, { label: "Duration", value: estDur }, { label: "Format", value: "MP4" }].map(({ label, value }) => (
+                      {[{ label: "Avatar", value: selectedAvatar.label }, { label: "Duration", value: estDur }, { label: "Format", value: "MP4" }].map(({ label, value }) => (
                         <div key={label}>
                           <p className="text-[10px] text-zinc-700 uppercase tracking-wider">{label}</p>
                           <p className="text-xs font-bold text-zinc-300 mt-0.5">{value}</p>
@@ -514,13 +595,16 @@ export default function GeneratorPage() {
                       ))}
                     </div>
                   </div>
-                  <button
+                  <a
+                    href={videoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download="video.mp4"
                     className="w-full py-4 rounded-xl text-base font-black text-white flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.98] transition-all"
                     style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
-                    onClick={() => {/* TODO: window.open(videoUrl) */}}
                   >
                     <Download size={18} /> Download Video
-                  </button>
+                  </a>
                   <button onClick={handleReset} className="w-full py-2.5 text-xs font-semibold text-zinc-700 hover:text-zinc-400 transition-colors flex items-center justify-center gap-1.5">
                     <RefreshCw size={11} /> Start New
                   </button>
