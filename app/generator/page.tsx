@@ -71,6 +71,8 @@ export default function GeneratorPage() {
   const [step, setStep]               = useState<Step>(1);
   const [fileName, setFileName]       = useState<string | null>(null);
   const [script, setScript]           = useState(MOCK_SCRIPT);
+  const [extracting, setExtracting]   = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioReady, setAudioReady]   = useState(false);
   const [audioUrl, setAudioUrl]       = useState<string | null>(null);
@@ -88,6 +90,25 @@ export default function GeneratorPage() {
   const estSecs    = Math.round((wordCount / 130) * 60);
   const estDur     = `${Math.floor(estSecs / 60)}:${String(estSecs % 60).padStart(2, "0")}`;
   const charCount  = script.replace(/\s/g, "").length;
+
+  async function extractScript(file: File) {
+    setFileName(file.name);
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/extract-script", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      setScript(data.text);
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : String(err));
+      setScript(MOCK_SCRIPT);
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   async function handleGenerateAudio() {
     setAudioLoading(true);
@@ -147,6 +168,7 @@ export default function GeneratorPage() {
   function handleReset() {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setStep(1); setFileName(null); setScript(MOCK_SCRIPT);
+    setExtracting(false); setExtractError(null);
     setAudioLoading(false); setAudioReady(false); setAudioUrl(null); setAudioError(null); setIsPlaying(false);
     setVideoProgress(0); setVideoLoading(false); setVideoReady(false);
   }
@@ -227,7 +249,7 @@ export default function GeneratorPage() {
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) setFileName(f.name);
+                  if (f) extractScript(f);
                 }}
               />
 
@@ -244,7 +266,7 @@ export default function GeneratorPage() {
                   onDrop={(e) => {
                     e.preventDefault(); setIsDragging(false);
                     const f = e.dataTransfer.files[0];
-                    if (f) setFileName(f.name);
+                    if (f) extractScript(f);
                   }}
                 >
                   <div
@@ -273,25 +295,42 @@ export default function GeneratorPage() {
                       className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
                       style={{ background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.2)" }}
                     >
-                      <FileText size={20} className="text-violet-400" />
+                      {extracting
+                        ? <span className="w-5 h-5 rounded-full border-2 border-violet-400/30 border-t-violet-400 animate-spin" />
+                        : <FileText size={20} className="text-violet-400" />
+                      }
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-white truncate">{fileName}</p>
-                      <p className="text-xs text-zinc-600 mt-0.5">Word Document · Ready to extract</p>
+                      <p className="text-xs text-zinc-600 mt-0.5">
+                        {extracting ? "Extracting text…" : extractError ? "Extraction failed" : "Word Document · Script ready"}
+                      </p>
                     </div>
                     <button
-                      onClick={() => setFileName(null)}
+                      onClick={() => { setFileName(null); setExtractError(null); }}
                       className="text-xs text-zinc-700 hover:text-zinc-400 transition-colors"
                     >
                       Remove
                     </button>
                   </div>
+
+                  {extractError && (
+                    <div
+                      className="rounded-xl p-3 flex items-start gap-2"
+                      style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.2)" }}
+                    >
+                      <AlertCircle size={13} className="text-rose-400 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-rose-400">{extractError}</p>
+                    </div>
+                  )}
+
                   <button
                     onClick={() => setStep(2)}
-                    className="w-full py-3 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all"
+                    disabled={extracting}
+                    className="w-full py-3 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 hover:opacity-90 transition-all disabled:opacity-40"
                     style={{ background: "linear-gradient(135deg, #8B5CF6, #06B6D4)" }}
                   >
-                    Extract Script <ChevronRight size={14} />
+                    {extracting ? "Extracting…" : <>Review Script <ChevronRight size={14} /></>}
                   </button>
                 </div>
               )}
