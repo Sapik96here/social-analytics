@@ -6,18 +6,16 @@ import OverviewTab from "@/components/OverviewTab";
 import AccountView from "@/components/AccountView";
 import AppShell from "@/components/AppShell";
 import { BarChart2, Camera, Globe, CalendarDays } from "lucide-react";
+import InstagramAccountView from "@/components/InstagramAccountView";
 
-// TODO: Replace with Meta Graph API OAuth flow to load connected accounts dynamically.
-//   Use the Facebook Login SDK to obtain a long-lived page access token, then:
-//   GET /me/accounts to list pages, GET /me?fields=instagram_business_account for IG accounts.
-
-type TabId = "overview" | "ig-official" | "ig-th" | "fb-th";
+type TabId = "overview" | "ig-real" | "ig-official" | "ig-th" | "fb-th";
 
 const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
-  { id: "overview", label: "Overview", icon: <BarChart2 size={14} /> },
-  { id: "ig-official", label: "IG @brandname_official", icon: <Camera size={14} /> },
-  { id: "ig-th", label: "IG @brandname_th", icon: <Camera size={14} /> },
-  { id: "fb-th", label: "Brand Name TH", icon: <Globe size={14} /> },
+  { id: "overview",   label: "Overview",             icon: <BarChart2 size={14} /> },
+  { id: "ig-real",    label: "IG @davidkychualive",  icon: <Camera size={14} /> },
+  { id: "ig-official",label: "IG @brandname_official",icon: <Camera size={14} /> },
+  { id: "ig-th",      label: "IG @brandname_th",     icon: <Camera size={14} /> },
+  { id: "fb-th",      label: "Brand Name TH",        icon: <Globe size={14} /> },
 ];
 
 const dateRangeOptions: { value: DateRange; label: string }[] = [
@@ -108,6 +106,8 @@ export default function Dashboard() {
         {/* Content */}
         {activeTab === "overview" ? (
           <OverviewTab accounts={accounts} dateRange={dateRange} />
+        ) : activeTab === "ig-real" ? (
+          <InstagramAccountView />
         ) : activeAccount ? (
           <AccountView account={activeAccount} dateRange={dateRange} />
         ) : null}
