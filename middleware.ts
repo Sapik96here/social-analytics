@@ -4,6 +4,7 @@ const TIKTOK_TOKENS = [
   "gJdBgyAJYIBwY3VXBQPyuGOZGA0XIljo",
   "WA7n3BWR4sVO4NsfeuMRDeY2QyzaovTY",
   "L6JLFNBe8LJJBmEo4d9c5LjY9DXump3X",
+  "tfeYl01cYdpta0RtLRqEZhevbqChcRuL",
 ];
 
 export function middleware(request: NextRequest) {
