@@ -20,16 +20,21 @@ export async function GET() {
     return NextResponse.json({ error: "Facebook not configured" }, { status: 500 });
   }
 
-  // Only fetch what's reliably available for New Pages Experience
-  const [pageRes, postsRes] = await Promise.all([
+  const since = Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60; // 30 days ago
+  const until = Math.floor(Date.now() / 1000);
+
+  const [pageRes, feedRes, insightsRes] = await Promise.all([
     tryFetch(`${BASE}/${PAGE_ID}?fields=name,followers_count,fan_count,about&access_token=${PAGE_TOKEN}`),
-    tryFetch(`${BASE}/${PAGE_ID}/posts?fields=id,message,created_time,full_picture,likes.summary(true),comments.summary(true),shares&limit=10&access_token=${PAGE_TOKEN}`),
+    tryFetch(`${BASE}/${PAGE_ID}/feed?fields=message,created_time,full_picture,likes.summary(true),shares,comments.summary(true)&limit=10&access_token=${PAGE_TOKEN}`),
+    tryFetch(`${BASE}/${PAGE_ID}/insights?metric=page_views_total,page_post_engagements,page_actions_post_reactions_total&period=day&since=${since}&until=${until}&access_token=${PAGE_TOKEN}`),
   ]);
 
   return NextResponse.json({
-    page:      pageRes.data,
-    pageError: pageRes.error,
-    posts:     postsRes.data?.data ?? null,
-    postsError: postsRes.error,
+    page:          pageRes.data,
+    pageError:     pageRes.error,
+    posts:         feedRes.data?.data  ?? null,
+    postsError:    feedRes.error,
+    insights:      insightsRes.data?.data ?? null,
+    insightsError: insightsRes.error,
   });
 }

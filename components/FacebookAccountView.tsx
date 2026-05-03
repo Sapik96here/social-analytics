@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/mockData";
-import { Users, TrendingUp, ThumbsUp, MessageSquare, Share2, AlertCircle } from "lucide-react";
+import { Users, Eye, TrendingUp, ThumbsUp, MessageSquare, Share2, AlertCircle } from "lucide-react";
 
 interface FBPage {
   id: string;
@@ -12,6 +12,10 @@ interface FBPage {
   about?: string;
 }
 
+interface FBInsight {
+  name: string;
+  values: { value: number; end_time: string }[];
+}
 
 interface FBPost {
   id: string;
@@ -28,15 +32,14 @@ interface FBData {
   pageError: string | null;
   posts: FBPost[] | null;
   postsError: string | null;
+  insights: FBInsight[] | null;
+  insightsError: string | null;
 }
 
-function PermissionNote({ message }: { message: string }) {
-  return (
-    <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
-      <AlertCircle size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />
-      <p className="text-[11px] text-amber-400/80">{message}</p>
-    </div>
-  );
+function sumInsight(insights: FBInsight[] | null, name: string): number | null {
+  const m = insights?.find((i) => i.name === name);
+  if (!m) return null;
+  return m.values.reduce((s, v) => s + (v.value || 0), 0);
 }
 
 export default function FacebookAccountView() {
@@ -66,12 +69,20 @@ export default function FacebookAccountView() {
   );
 
   const page      = data?.page;
-  const posts     = data?.posts;
+  const posts     = data?.posts ?? [];
+  const insights  = data?.insights ?? null;
   const followers = page?.followers_count ?? page?.fan_count ?? null;
-  const bestPost  = posts ? [...posts].sort((a, b) =>
-    ((b.likes?.summary.total_count ?? 0) + (b.shares?.count ?? 0) * 2) -
-    ((a.likes?.summary.total_count ?? 0) + (a.shares?.count ?? 0) * 2)
-  )[0] : null;
+
+  const pageViews   = sumInsight(insights, "page_views_total");
+  const engagements = sumInsight(insights, "page_post_engagements");
+  const reactions   = sumInsight(insights, "page_actions_post_reactions_total");
+
+  const bestPost = posts.length
+    ? [...posts].sort((a, b) =>
+        ((b.likes?.summary.total_count ?? 0) + (b.shares?.count ?? 0) * 2 + (b.comments?.summary.total_count ?? 0)) -
+        ((a.likes?.summary.total_count ?? 0) + (a.shares?.count ?? 0) * 2 + (a.comments?.summary.total_count ?? 0))
+      )[0]
+    : null;
 
   return (
     <div className="space-y-6">
@@ -94,35 +105,29 @@ export default function FacebookAccountView() {
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
-        <div className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Users size={14} className="text-blue-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Followers</span>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: "Followers",       value: followers,   icon: <Users size={14} />,      color: "#60a5fa" },
+          { label: "Page Views (30d)", value: pageViews,   icon: <Eye size={14} />,        color: "#a78bfa" },
+          { label: "Engagements (30d)",value: engagements, icon: <TrendingUp size={14} />, color: "#34d399" },
+          { label: "Reactions (30d)",  value: reactions,   icon: <ThumbsUp size={14} />,   color: "#f472b6" },
+        ].map(({ label, value, icon, color }) => (
+          <div key={label} className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span style={{ color }}>{icon}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{label}</span>
+            </div>
+            {value !== null
+              ? <p className="text-2xl font-black text-white">{formatNumber(value)}</p>
+              : <p className="text-sm text-zinc-600">—</p>}
           </div>
-          {followers !== null
-            ? <p className="text-2xl font-black text-white">{formatNumber(followers)}</p>
-            : <p className="text-sm text-zinc-600">—</p>}
-        </div>
-
-        <div className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <TrendingUp size={14} className="text-emerald-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Total Posts</span>
-          </div>
-          <p className="text-2xl font-black text-white">{posts?.length ?? "—"}</p>
-        </div>
+        ))}
       </div>
 
-      {/* App mode notice for posts */}
-      {data?.postsError && (
-        <PermissionNote message="Post data requires your Meta app to be in Live mode. Go to Meta Developers → App Settings → switch from Development to Live to unlock posts and impressions." />
-      )}
-
       {/* Best post */}
-      {bestPost ? (
+      {bestPost && (
         <div className="bg-[#0f1320] border border-white/[0.06] rounded-xl p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-3">Best Post (Recent)</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-3">Best Post (by likes + shares + comments)</p>
           <div className="flex gap-4">
             {bestPost.full_picture && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -136,28 +141,17 @@ export default function FacebookAccountView() {
                 {new Date(bestPost.created_time).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
               </p>
               <div className="flex gap-4">
-                <span className="flex items-center gap-1 text-xs text-zinc-400">
-                  <ThumbsUp size={11} className="text-blue-400" />
-                  {formatNumber(bestPost.likes?.summary.total_count ?? 0)}
-                </span>
-                <span className="flex items-center gap-1 text-xs text-zinc-400">
-                  <MessageSquare size={11} className="text-indigo-400" />
-                  {formatNumber(bestPost.comments?.summary.total_count ?? 0)}
-                </span>
-                <span className="flex items-center gap-1 text-xs text-zinc-400">
-                  <Share2 size={11} className="text-emerald-400" />
-                  {formatNumber(bestPost.shares?.count ?? 0)}
-                </span>
+                <span className="flex items-center gap-1 text-xs text-zinc-400"><ThumbsUp size={11} className="text-blue-400" />{formatNumber(bestPost.likes?.summary.total_count ?? 0)}</span>
+                <span className="flex items-center gap-1 text-xs text-zinc-400"><MessageSquare size={11} className="text-indigo-400" />{formatNumber(bestPost.comments?.summary.total_count ?? 0)}</span>
+                <span className="flex items-center gap-1 text-xs text-zinc-400"><Share2 size={11} className="text-emerald-400" />{formatNumber(bestPost.shares?.count ?? 0)}</span>
               </div>
             </div>
           </div>
         </div>
-      ) : data?.postsError ? (
-        <PermissionNote message={`Posts unavailable: ${data.postsError}`} />
-      ) : null}
+      )}
 
       {/* Posts list */}
-      {posts && posts.length > 0 && (
+      {posts.length > 0 ? (
         <div className="bg-[#0f1320] border border-white/[0.06] rounded-xl p-4">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-3">Recent Posts</p>
           <div className="space-y-3">
@@ -175,19 +169,21 @@ export default function FacebookAccountView() {
                     <span className="text-[10px] text-zinc-600">
                       {new Date(post.created_time).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </span>
-                    <span className="flex items-center gap-1 text-[10px] text-zinc-500">
-                      <ThumbsUp size={9} /> {formatNumber(post.likes?.summary.total_count ?? 0)}
-                    </span>
-                    <span className="flex items-center gap-1 text-[10px] text-zinc-500">
-                      <Share2 size={9} /> {formatNumber(post.shares?.count ?? 0)}
-                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-zinc-500"><ThumbsUp size={9} />{formatNumber(post.likes?.summary.total_count ?? 0)}</span>
+                    <span className="flex items-center gap-1 text-[10px] text-zinc-500"><Share2 size={9} />{formatNumber(post.shares?.count ?? 0)}</span>
+                    <span className="flex items-center gap-1 text-[10px] text-zinc-500"><MessageSquare size={9} />{formatNumber(post.comments?.summary.total_count ?? 0)}</span>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
-      )}
+      ) : data?.postsError ? (
+        <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
+          <AlertCircle size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />
+          <p className="text-[11px] text-amber-400/80">Posts unavailable: {data.postsError}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
