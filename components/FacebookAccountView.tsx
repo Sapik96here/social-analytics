@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/mockData";
-import { Users, Eye, TrendingUp, ThumbsUp, MessageSquare, Share2, AlertCircle } from "lucide-react";
+import { Users, TrendingUp, ThumbsUp, MessageSquare, Share2, AlertCircle } from "lucide-react";
 
 interface FBPage {
   id: string;
@@ -12,10 +12,6 @@ interface FBPage {
   about?: string;
 }
 
-interface FBInsight {
-  name: string;
-  values: { value: number; end_time: string }[];
-}
 
 interface FBPost {
   id: string;
@@ -32,15 +28,8 @@ interface FBData {
   pageError: string | null;
   posts: FBPost[] | null;
   postsError: string | null;
-  insights: FBInsight[] | null;
-  insightsError: string | null;
 }
 
-function sumInsight(insights: FBInsight[] | null, name: string): number | null {
-  const m = insights?.find((i) => i.name === name);
-  if (!m) return null;
-  return m.values.reduce((s, v) => s + (v.value || 0), 0);
-}
 
 export default function FacebookAccountView() {
   const [data, setData]       = useState<FBData | null>(null);
@@ -70,12 +59,12 @@ export default function FacebookAccountView() {
 
   const page      = data?.page;
   const posts     = data?.posts ?? [];
-  const insights  = data?.insights ?? null;
   const followers = page?.followers_count ?? page?.fan_count ?? null;
 
-  const pageViews   = sumInsight(insights, "page_views_total");
-  const engagements = sumInsight(insights, "page_post_engagements");
-  const reactions   = sumInsight(insights, "page_actions_post_reactions_total");
+  // Derive metrics from posts since Meta Insights returns no data for this page
+  const totalLikes    = posts.reduce((s, p) => s + (p.likes?.summary.total_count    ?? 0), 0);
+  const totalShares   = posts.reduce((s, p) => s + (p.shares?.count                 ?? 0), 0);
+  const totalComments = posts.reduce((s, p) => s + (p.comments?.summary.total_count ?? 0), 0);
 
   const bestPost = posts.length
     ? [...posts].sort((a, b) =>
@@ -107,10 +96,10 @@ export default function FacebookAccountView() {
       {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Followers",       value: followers,   icon: <Users size={14} />,      color: "#60a5fa" },
-          { label: "Page Views (30d)", value: pageViews,   icon: <Eye size={14} />,        color: "#a78bfa" },
-          { label: "Engagements (30d)",value: engagements, icon: <TrendingUp size={14} />, color: "#34d399" },
-          { label: "Reactions (30d)",  value: reactions,   icon: <ThumbsUp size={14} />,   color: "#f472b6" },
+          { label: "Followers",      value: followers,     icon: <Users size={14} />,      color: "#60a5fa" },
+          { label: "Total Likes",    value: totalLikes,    icon: <ThumbsUp size={14} />,   color: "#f472b6" },
+          { label: "Total Shares",   value: totalShares,   icon: <Share2 size={14} />,     color: "#34d399" },
+          { label: "Total Comments", value: totalComments, icon: <TrendingUp size={14} />, color: "#a78bfa" },
         ].map(({ label, value, icon, color }) => (
           <div key={label} className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
