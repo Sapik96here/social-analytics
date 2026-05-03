@@ -7,6 +7,7 @@ import AccountView from "@/components/AccountView";
 import AppShell from "@/components/AppShell";
 import { BarChart2, Camera, Globe, CalendarDays } from "lucide-react";
 import InstagramAccountView from "@/components/InstagramAccountView";
+import FacebookAccountView from "@/components/FacebookAccountView";
 
 type TabId = "overview" | "ig-real" | "ig-official" | "ig-th" | "fb-th";
 
@@ -15,7 +16,7 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "ig-real",    label: "IG @davidkychualive",  icon: <Camera size={14} /> },
   { id: "ig-official",label: "IG @brandname_official",icon: <Camera size={14} /> },
   { id: "ig-th",      label: "IG @brandname_th",     icon: <Camera size={14} /> },
-  { id: "fb-th",      label: "Brand Name TH",        icon: <Globe size={14} /> },
+  { id: "fb-th",      label: "David KY Chua (FB)",   icon: <Globe size={14} /> },
 ];
 
 const dateRangeOptions: { value: DateRange; label: string }[] = [
@@ -108,6 +109,8 @@ export default function Dashboard() {
           <OverviewTab accounts={accounts} dateRange={dateRange} />
         ) : activeTab === "ig-real" ? (
           <InstagramAccountView />
+        ) : activeTab === "fb-th" ? (
+          <FacebookAccountView />
         ) : activeAccount ? (
           <AccountView account={activeAccount} dateRange={dateRange} />
         ) : null}
