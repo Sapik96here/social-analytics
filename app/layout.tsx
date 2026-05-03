@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Social Analytics — Internal",
   description: "Internal social media reporting dashboard",
+  other: {
+    "tiktok-domain-verification": "L6JLFNBe8LJJBmEo4d9c5LjY9DXump3X",
+  },
 };
 
 export default function RootLayout({
