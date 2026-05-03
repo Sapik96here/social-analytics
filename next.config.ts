@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
       { source: "/terms-of-service",  destination: "/terms",   permanent: true },
     ];
   },
+  async rewrites() {
+    return [
+      {
+        source: "/tiktokgJdBgyAJYIBwY3VXBQPyuGOZGA0XIljo.txt/",
+        destination: "/tiktokgJdBgyAJYIBwY3VXBQPyuGOZGA0XIljo.txt",
+      },
+    ];
+  },
 };
 
 export default nextConfig;
