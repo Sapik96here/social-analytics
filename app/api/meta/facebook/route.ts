@@ -20,19 +20,16 @@ export async function GET() {
     return NextResponse.json({ error: "Facebook not configured" }, { status: 500 });
   }
 
-  // Run all three requests in parallel; each may fail independently
-  const [pageRes, insightsRes, postsRes] = await Promise.all([
+  // Only fetch what's reliably available for New Pages Experience
+  const [pageRes, postsRes] = await Promise.all([
     tryFetch(`${BASE}/${PAGE_ID}?fields=name,followers_count,fan_count,about&access_token=${PAGE_TOKEN}`),
-    tryFetch(`${BASE}/${PAGE_ID}/insights?metric=page_impressions,page_impressions_unique&period=day&date_preset=last_30d&access_token=${PAGE_TOKEN}`),
     tryFetch(`${BASE}/${PAGE_ID}/posts?fields=id,message,created_time,full_picture,likes.summary(true),comments.summary(true),shares&limit=10&access_token=${PAGE_TOKEN}`),
   ]);
 
   return NextResponse.json({
-    page:     pageRes.data,
+    page:      pageRes.data,
     pageError: pageRes.error,
-    insights: insightsRes.data?.data ?? null,
-    insightsError: insightsRes.error,
-    posts:    postsRes.data?.data ?? null,
+    posts:     postsRes.data?.data ?? null,
     postsError: postsRes.error,
   });
 }

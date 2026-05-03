@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/mockData";
-import { Users, Eye, TrendingUp, ThumbsUp, MessageSquare, Share2, AlertCircle } from "lucide-react";
+import { Users, TrendingUp, ThumbsUp, MessageSquare, Share2, AlertCircle } from "lucide-react";
 
 interface FBPage {
   id: string;
@@ -12,10 +12,6 @@ interface FBPage {
   about?: string;
 }
 
-interface FBInsight {
-  name: string;
-  values: { value: number; end_time: string }[];
-}
 
 interface FBPost {
   id: string;
@@ -30,8 +26,6 @@ interface FBPost {
 interface FBData {
   page: FBPage | null;
   pageError: string | null;
-  insights: FBInsight[] | null;
-  insightsError: string | null;
   posts: FBPost[] | null;
   postsError: string | null;
 }
@@ -71,14 +65,10 @@ export default function FacebookAccountView() {
     </div>
   );
 
-  const page     = data?.page;
-  const insights = data?.insights;
-  const posts    = data?.posts;
-
-  const followers    = page?.followers_count ?? page?.fan_count ?? null;
-  const totalImpres  = insights?.find(i => i.name === "page_impressions")?.values.reduce((s, v) => s + (v.value || 0), 0) ?? null;
-  const totalReach   = insights?.find(i => i.name === "page_impressions_unique")?.values.reduce((s, v) => s + (v.value || 0), 0) ?? null;
-  const bestPost     = posts ? [...posts].sort((a, b) =>
+  const page      = data?.page;
+  const posts     = data?.posts;
+  const followers = page?.followers_count ?? page?.fan_count ?? null;
+  const bestPost  = posts ? [...posts].sort((a, b) =>
     ((b.likes?.summary.total_count ?? 0) + (b.shares?.count ?? 0) * 2) -
     ((a.likes?.summary.total_count ?? 0) + (a.shares?.count ?? 0) * 2)
   )[0] : null;
@@ -104,7 +94,7 @@ export default function FacebookAccountView() {
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-2 gap-3">
         <div className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <Users size={14} className="text-blue-400" />
@@ -113,34 +103,20 @@ export default function FacebookAccountView() {
           {followers !== null
             ? <p className="text-2xl font-black text-white">{formatNumber(followers)}</p>
             : <p className="text-sm text-zinc-600">—</p>}
-          {data?.pageError && <p className="text-[10px] text-amber-500 mt-1">Needs pages_read_engagement</p>}
-        </div>
-
-        <div className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Eye size={14} className="text-indigo-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Impressions (30d)</span>
-          </div>
-          {totalImpres !== null
-            ? <p className="text-2xl font-black text-white">{formatNumber(totalImpres)}</p>
-            : <p className="text-sm text-zinc-600">—</p>}
-          {data?.insightsError && <p className="text-[10px] text-amber-500 mt-1">Needs pages_read_engagement</p>}
         </div>
 
         <div className="bg-[#161b27] border border-white/[0.06] rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <TrendingUp size={14} className="text-emerald-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Reach (30d)</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Total Posts</span>
           </div>
-          {totalReach !== null
-            ? <p className="text-2xl font-black text-white">{formatNumber(totalReach)}</p>
-            : <p className="text-sm text-zinc-600">—</p>}
+          <p className="text-2xl font-black text-white">{posts?.length ?? "—"}</p>
         </div>
       </div>
 
-      {/* Permission notice if needed */}
-      {(data?.pageError || data?.insightsError) && (
-        <PermissionNote message="Some metrics are unavailable. Add the 'pages_read_engagement' permission to your Meta app and regenerate the access token to unlock followers, impressions, reach, and post data." />
+      {/* App mode notice for posts */}
+      {data?.postsError && (
+        <PermissionNote message="Post data requires your Meta app to be in Live mode. Go to Meta Developers → App Settings → switch from Development to Live to unlock posts and impressions." />
       )}
 
       {/* Best post */}
